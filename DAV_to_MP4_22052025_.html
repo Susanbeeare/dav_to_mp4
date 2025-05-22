@@ -1,126 +1,70 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="utf-8" />
-  <title>Conversor DAV → MP4 (FFmpeg.wasm 0.12, vía HTTP)</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <!--
-    Este ejemplo requiere servirse por HTTP/HTTPS.
-    Durante el desarrollo rápido ejecuta:
-        npx http-server . -c-1 -o
-    o bien:
-        python -m http.server 8080  # Python ≥3
-
-    Opcional (recomendado en producción): añade cabeceras COOP/COEP
-      Cross-Origin-Opener-Policy: same-origin
-      Cross-Origin-Embedder-Policy: require-corp
-    para habilitar SharedArrayBuffer y ganar más memoria.
-  -->
-  <style>
-    body { font-family: system-ui, sans-serif; max-width: 42rem; margin: 0 auto; padding: 1rem; }
-    h1  { font-size: 1.4rem; }
-    button { padding: .6rem 1rem; border: none; border-radius: .5rem; font-size: 1rem; cursor: pointer; background: #1366d6; color: #fff; }
-    button:disabled { background: #aaa; cursor: not-allowed; }
-    progress { width: 100%; height: 1.2rem; margin: .75rem 0; }
-    #log { white-space: pre-wrap; font-family: monospace; background: #f5f5f5; padding: .75rem; border-radius: .4rem; height: 10rem; overflow-y: auto; }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Convertidor DAV a AVI</title>
+    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
+    <style>
+        #progress {
+            margin-top: 20px;
+            display: none;
+        }
+    </style>
 </head>
 <body>
-  <h1>Convertir archivos .DAV a MP4 (servido por HTTP)</h1>
+    <h1>Convertidor DAV a AVI</h1>
+    <input type="file" id="fileInput" accept=".dav" />
+    <button id="convertButton">Convertir</button>
+    <button id="downloadButton" disabled>Descargar</button>
+    <div id="progress">
+        <p>Progreso de la conversión:</p>
+        <progress id="progressBar" value="0" max="100"></progress>
+    </div>
 
-  <input type="file" id="uploader" accept=".dav" />
-  <button id="convertBtn" disabled>Convertir a MP4</button>
+    <script>
+        const { createFFmpeg, fetchFile } = FFmpeg;
+        const ffmpeg = createFFmpeg({ log: true });
 
-  <progress id="progress" value="0" max="100" hidden></progress>
-  <div id="log"></div>
+        document.getElementById('convertButton').addEventListener('click', async () => {
+            const fileInput = document.getElementById('fileInput');
+            if (fileInput.files.length === 0) {
+                alert('Por favor, selecciona un archivo .dav');
+                return;
+            }
 
-  <script type="module">
-    // Importamos FFmpeg desde jsDelivr (envía CORS OK);
-    // al servirse este HTML por HTTP, crear el Worker ya no será bloqueado.
-    import { FFmpeg } from "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js";
+            const file = fileInput.files[0];
+            if (!file.name.endsWith('.dav')) {
+                alert('Por favor, selecciona un archivo .dav');
+                return;
+            }
 
-    // Instancia sin trucos: FFmpeg buscará automáticamente worker.js y core en el mismo CDN
-    const ffmpeg = new FFmpeg();
+            document.getElementById('progress').style.display = 'block';
+            document.getElementById('convertButton').disabled = true;
 
-    // Helper para leer File/Blob/URL → Uint8Array
-    const fetchFile = async (src) => {
-      if (src instanceof File || src instanceof Blob) {
-        return new Uint8Array(await src.arrayBuffer());
-      }
-      const res = await fetch(src);
-      return new Uint8Array(await res.arrayBuffer());
-    };
+            if (!ffmpeg.isLoaded()) {
+                await ffmpeg.load();
+            }
 
-    // Elementos de la UI
-    const uploader   = document.getElementById("uploader");
-    const convertBtn = document.getElementById("convertBtn");
-    const progressEl = document.getElementById("progress");
-    const logBox     = document.getElementById("log");
-    const log = (msg) => { logBox.textContent += msg + "\n"; logBox.scrollTop = logBox.scrollHeight; };
+            ffmpeg.FS('writeFile', 'input.dav', await fetchFile(file));
 
-    const loadFFmpeg = async () => {
-      if (!ffmpeg.loaded) {
-        log("Descargando núcleo FFmpeg…");
-        await ffmpeg.load({ log: true });
-        log("FFmpeg listo ✔️");
-      }
-    };
+            await ffmpeg.run('-i', 'input.dav', 'output.avi');
 
-    uploader.addEventListener("change", () => {
-      convertBtn.disabled = !uploader.files.length;
-    });
+            const data = ffmpeg.FS('readFile', 'output.avi');
 
-    convertBtn.addEventListener("click", async () => {
-      const file = uploader.files?.[0];
-      if (!file) return;
+            const downloadButton = document.getElementById('downloadButton');
+            downloadButton.disabled = false;
+            downloadButton.onclick = () => {
+                const blob = new Blob([data.buffer], { type: 'video/avi' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'output.avi';
+                a.click();
+            };
 
-      convertBtn.disabled = true;
-      progressEl.hidden = false;
-      progressEl.value = 0;
-      logBox.textContent = "";
-
-      try {
-        await loadFFmpeg();
-
-        ffmpeg.on("progress", ({ progress }) => {
-          progressEl.value = Math.round(progress * 100);
+            document.getElementById('progress').style.display = 'none';
         });
-
-        // Escribir .DAV en FS virtual
-        await ffmpeg.writeFile(file.name, await fetchFile(file));
-        log(`Archivo recibido: ${file.name}`);
-
-        const output = "salida.mp4";
-        log("Convirtiendo (copia de streams)…");
-        await ffmpeg.exec(["-i", file.name, "-c", "copy", output]);
-        log("Conversión terminada ✔️");
-
-        // Descargar resultado
-        const data = await ffmpeg.readFile(output);
-        const url = URL.createObjectURL(new Blob([data.buffer], { type: "video/mp4" }));
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = file.name.replace(/\.dav$/i, "_convertido.mp4");
-        a.textContent = "Descargar MP4";
-        a.style.display = "block";
-        a.style.marginTop = "1rem";
-        document.body.appendChild(a);
-
-        // Limpieza
-        await ffmpeg.deleteFile(file.name);
-        await ffmpeg.deleteFile(output);
-      } catch (err) {
-        console.error(err);
-        log("❌ Error: " + err.message);
-        log("Asegúrate de estar sirviendo la página por HTTP y de tener conexión a internet.");
-      } finally {
-        progressEl.hidden = true;
-        convertBtn.disabled = false;
-      }
-    });
-
-    // Liberar memoria al cerrar pestaña
-    window.addEventListener("beforeunload", () => ffmpeg.terminate());
-  </script>
+    </script>
 </body>
 </html>
