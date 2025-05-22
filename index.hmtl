@@ -24,23 +24,27 @@
   <!-- Progreso y registro -->
   <div id="progress" aria-live="polite" aria-atomic="true"></div>
 
-  <!-- Carga de FFmpeg (WebAssembly) y lógica -->
-  <script type="module">
-    import { createFFmpeg, fetchFile } from 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.2/dist/ffmpeg.min.js?module';
+  <!-- Cargamos FFmpeg compilado para navegador (UMD) -->
+  <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.2/dist/ffmpeg.min.js"></script>
 
-    // Instancia de FFmpeg — el parámetro log:true imprime la salida de ffmpeg
+  <!-- Lógica de la aplicación -->
+  <script>
+    // Accesos desde el bundle UMD global "FFmpeg"
+    const { createFFmpeg, fetchFile } = FFmpeg;
+
+    // Instancia de FFmpeg — con log y callback de progreso
     const ffmpeg = createFFmpeg({
       log: true,
       progress: ({ ratio }) => appendProgress(`Progreso: ${(ratio * 100).toFixed(2)}%`)
     });
 
-    // Referencias a elementos del DOM
+    // Referencias DOM
     const davInput = document.getElementById('davInput');
     const convertBtn = document.getElementById('convertBtn');
     const downloadBtn = document.getElementById('downloadBtn');
     const progressBox = document.getElementById('progress');
 
-    let aviData; // Uint8Array con el resultado
+    let aviData; // Uint8Array con el resultado en memoria
 
     davInput.addEventListener('change', () => {
       convertBtn.disabled = !davInput.files.length;
@@ -78,11 +82,11 @@
       appendProgress('Iniciando conversión…');
 
       try {
-        // -c copy para evitar recodificar si el codec ya es compatible
         await ffmpeg.run('-i', davName, '-c', 'copy', aviName);
       } catch (err) {
         appendProgress('⚠️ Error durante la conversión. Consulta la consola del navegador.');
         console.error(err);
+        convertBtn.disabled = false;
         return;
       }
 
