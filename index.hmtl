@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Conversor DAV → AVI</title>
+  <style>
+    body{font-family:system-ui,sans-serif;margin:2rem;max-width:680px}
+    h1{font-size:1.5rem;margin-bottom:1rem}
+    #progress{margin-top:1rem;border:1px solid #ccc;border-radius:.5rem;padding:.5rem;height:6rem;overflow-y:auto;white-space:pre-line}
+    input[type="file"]{margin-right:.5rem}
+    button{margin:.5rem .25rem .5rem 0;padding:.5rem 1rem;border:none;border-radius:.5rem;background:#0d6efd;color:#fff;font-weight:600;cursor:pointer}
+    button:disabled{background:#999;cursor:not-allowed}
+  </style>
+</head>
+<body>
+  <h1>Conversor DAV → AVI (funciona en tu navegador)</h1>
+
+  <!-- Zona de controles -->
+  <input type="file" id="davInput" accept=".dav" />
+  <button id="convertBtn" disabled>Convertir</button>
+  <button id="downloadBtn" disabled>Descargar AVI</button>
+
+  <!-- Progreso y registro -->
+  <div id="progress" aria-live="polite" aria-atomic="true"></div>
+
+  <!-- Carga de FFmpeg (WebAssembly) y lógica -->
+  <script type="module">
+    import { createFFmpeg, fetchFile } from 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.2/dist/ffmpeg.min.js?module';
+
+    // Instancia de FFmpeg — el parámetro log:true imprime la salida de ffmpeg
+    const ffmpeg = createFFmpeg({
+      log: true,
+      progress: ({ ratio }) => appendProgress(`Progreso: ${(ratio * 100).toFixed(2)}%`)
+    });
+
+    // Referencias a elementos del DOM
+    const davInput = document.getElementById('davInput');
+    const convertBtn = document.getElementById('convertBtn');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const progressBox = document.getElementById('progress');
+
+    let aviData; // Uint8Array con el resultado
+
+    davInput.addEventListener('change', () => {
+      convertBtn.disabled = !davInput.files.length;
+      progressBox.textContent = '';
+      downloadBtn.disabled = true;
+    });
+
+    function appendProgress(text) {
+      progressBox.textContent += `${text}\n`;
+      progressBox.scrollTop = progressBox.scrollHeight;
+    }
+
+    async function ensureFFmpegLoaded() {
+      if (!ffmpeg.isLoaded()) {
+        appendProgress('Cargando FFmpeg… (puede tardar unos segundos)');
+        await ffmpeg.load();
+        appendProgress('FFmpeg cargado.');
+      }
+    }
+
+    convertBtn.addEventListener('click', async () => {
+      const file = davInput.files[0];
+      if (!file) return;
+
+      convertBtn.disabled = true;
+      appendProgress(`\nArchivo seleccionado: ${file.name}`);
+
+      await ensureFFmpegLoaded();
+
+      const davName = 'input.dav';
+      const aviName = 'output.avi';
+
+      // Copiamos el archivo al FS virtual de FFmpeg
+      ffmpeg.FS('writeFile', davName, await fetchFile(file));
+      appendProgress('Iniciando conversión…');
+
+      try {
+        // -c copy para evitar recodificar si el codec ya es compatible
+        await ffmpeg.run('-i', davName, '-c', 'copy', aviName);
+      } catch (err) {
+        appendProgress('⚠️ Error durante la conversión. Consulta la consola del navegador.');
+        console.error(err);
+        return;
+      }
+
+      appendProgress('Conversión finalizada.');
+
+      // Recuperamos el AVI generado
+      aviData = ffmpeg.FS('readFile', aviName);
+      downloadBtn.disabled = false;
+      appendProgress('AVI listo para descargar.');
+      convertBtn.disabled = false;
+    });
+
+    downloadBtn.addEventListener('click', () => {
+      if (!aviData) return;
+      const blob = new Blob([aviData.buffer], { type: 'video/avi' });
+      const url = URL.createObjectURL(blob);
+      const a = Object.assign(document.createElement('a'), { href: url, download: 'video.avi' });
+      document.body.appendChild(a);
+      a.click();
+      URL.revokeObjectURL(url);
+      a.remove();
+    });
+  </script>
+</body>
+</html>
